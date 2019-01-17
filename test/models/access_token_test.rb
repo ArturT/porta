@@ -91,6 +91,12 @@ class AccessTokenTest < ActiveSupport::TestCase
     assert Array, @token.human_scopes
   end
 
+  def test_scope_by_name
+    %w[searchable another_name].each { |name| FactoryBot.create_list(:access_token, 2, name: name) }
+    assert_same_elements AccessToken.where('name LIKE \'%arch%\'').pluck(:id), AccessToken.by_name('arch').pluck(:id)
+    assert_same_elements AccessToken.all.pluck(:id), AccessToken.by_name('').pluck(:id)
+  end
+
   private
 
   def member

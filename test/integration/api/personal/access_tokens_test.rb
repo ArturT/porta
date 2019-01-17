@@ -36,13 +36,13 @@ class Admin::Api::Personal::AccessTokensTest < ActionDispatch::IntegrationTest
     end
 
     test 'perform request by ID works well' do
-      return unless respond_to?(:perform_request)
+      return if !respond_to?(:perform_request) || !respond_to?(:assert_it_worked)
       perform_request
       assert_it_worked
     end
 
     test 'perform request by value works well' do
-      return unless respond_to?(:perform_request)
+      return if !respond_to?(:perform_request) || !respond_to?(:assert_it_worked)
       perform_request(different_params: {id: @access_token_object.value})
       assert_it_worked
     end
@@ -86,20 +86,6 @@ class Admin::Api::Personal::AccessTokensTest < ActionDispatch::IntegrationTest
       end
     end
 
-    test 'POST creates an access token for member user with the right permissions and access token' do
-      authorized_member = FactoryBot.create(:member, account: @provider, admin_sections: [:partners])
-      access_token = FactoryBot.create(:access_token, owner: authorized_member, scopes: %w[account_management])
-
-      assert_difference authorized_member.access_tokens.method(:count) do
-        perform_request(authentication: {access_token: access_token.value})
-        assert_response :created
-      end
-      created_token = authorized_member.access_tokens.last
-      access_token_params.each do |key, value|
-        assert_equal value, created_token.public_send(key)
-      end
-    end
-
     test 'POST does not accept a custom value' do
       @access_token_params = access_token_params.merge({value: 'foobar'})
 
@@ -122,12 +108,46 @@ class Admin::Api::Personal::AccessTokensTest < ActionDispatch::IntegrationTest
 
     private
 
+    def assert_it_worked
+      assert_response :created
+      created_token = AccessToken.last
+      access_token_params.each do |key, value|
+        assert_equal value, created_token.public_send(key)
+      end
+    end
+
     def access_token_params(different_params = {})
       @access_token_params ||= { name: 'token name', permission: 'ro', scopes: %w[finance] }.merge(different_params)
     end
 
     def perform_request(authentication: {access_token: @admin_access_token.value}, different_params: {})
-      post admin_api_personal_access_tokens_path((authentication).merge(different_params)), access_token_params
+      post admin_api_personal_access_tokens_path(authentication.merge(different_params)), access_token_params
+    end
+  end
+
+  class Admin::Api::Personal::IndexAccessTokenTest < Admin::Api::Personal::AccessTokensTest
+    test 'index returns all access tokens of the current user when no param is sent' do
+      [@admin, FactoryBot.create(:simple_admin, account: @provider)].each { |owner| FactoryBot.create_list(:access_token, 2, owner: owner) }
+      perform_request
+      assert_response :ok
+      assert_instance_of Array, (access_tokens_json_response = JSON.parse(response.body)['access_tokens'])
+      assert_same_elements(@admin.access_tokens.pluck(:id), (access_tokens_json_response.map { |access_token| access_token.dig('access_token', 'id') }))
+      assert_empty access_tokens_json_response.map { |access_token| access_token.dig('access_token', 'value') }.compact
+    end
+
+    test 'index searches the access tokens of the user containing the name of the param' do
+      another_admin = FactoryBot.create(:simple_admin, account: @provider)
+      [@admin, another_admin].each do |owner|
+        %w[searchable another_name].each { |name| FactoryBot.create_list(:access_token, 2, owner: owner, name: name) }
+      end
+      perform_request(different_params: {name: 'arch'})
+      assert_response :ok
+      assert_instance_of Array, (access_tokens_json_response = JSON.parse(response.body)['access_tokens'])
+      assert_same_elements(@admin.access_tokens.where('name LIKE \'%arch%\'').pluck(:id), (access_tokens_json_response.map { |access_token| access_token.dig('access_token', 'id') }))
+    end
+
+    def perform_request(authentication: {access_token: @admin_access_token.value}, different_params: {})
+      get admin_api_personal_access_tokens_path(authentication.merge(different_params))
     end
   end
 
@@ -161,5 +181,14 @@ class Admin::Api::Personal::AccessTokensTest < ActionDispatch::IntegrationTest
       perform_request(authentication: {access_token: wrong_token_scope.value})
       assert_response :forbidden
     end
+  end
+
+  test 'authentication allowed for account_management access token belonging to a member user with the right permissions' do
+    return if !respond_to?(:perform_request) || !respond_to?(:assert_it_worked)
+    authorized_member = FactoryBot.create(:member, account: @provider, admin_sections: [:partners])
+    access_token = FactoryBot.create(:access_token, owner: authorized_member, scopes: %w[account_management])
+
+    perform_request(authentication: {access_token: access_token.value})
+    assert_it_worked
   end
 end

@@ -9,6 +9,8 @@ class AccessToken < ApplicationRecord
     end.to_h
   end
 
+  scope :by_name, ->(name) { name.present? ? where("name LIKE ?", "%#{name}%") : all }
+
   PERMISSIONS = options_to_hash(%w(ro rw)).freeze
   SCOPES      = options_to_hash(%w(cms finance account_management stats)).freeze
 
